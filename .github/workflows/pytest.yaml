@@ -23,6 +23,16 @@ on:
         description: "Build a maturin extension before testing."
         type: boolean
         default: false
+      coverage:
+        description: >
+          Package to measure coverage for, eg. "disent". Empty disables coverage
+          and the codecov upload. Requires pytest-cov in the installed extras.
+        type: string
+        default: ""
+    secrets:
+      CODECOV_TOKEN:
+        description: "Only needed when `coverage` is set."
+        required: false
 
 jobs:
   test:
@@ -63,4 +73,17 @@ jobs:
         run: uv run --no-project --python .venv maturin develop --release
 
       - name: Run pytest
-        run: .venv/bin/pytest ${{ inputs.pytest-args }}
+        run: |
+          if [ -n "${{ inputs.coverage }}" ]; then
+            .venv/bin/pytest --cov=${{ inputs.coverage }} ${{ inputs.pytest-args }}
+          else
+            .venv/bin/pytest ${{ inputs.pytest-args }}
+          fi
+
+      # codecov merges all uploaded files, so every matrix entry can upload.
+      # never blocks the build -- a coverage upload failing is not a test failure.
+      - if: inputs.coverage != ''
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
