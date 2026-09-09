@@ -30,6 +30,13 @@ on:
           when a hook imports the package -- `ty` does, `ruff` and cargo do not.
         type: boolean
         default: true
+      skip-hooks:
+        description: >
+          Comma-separated hook ids to skip, passed to pre-commit as SKIP. For
+          hooks that need system libraries this job does not install, and which
+          therefore run in a better-equipped workflow instead.
+        type: string
+        default: ""
 
 jobs:
   pre-commit:
@@ -61,4 +68,6 @@ jobs:
           fi
 
       - name: Run pre-commit
+        env:
+          SKIP: ${{ inputs.skip-hooks }}
         run: uvx --from pre-commit pre-commit run --all-files --show-diff-on-failure
