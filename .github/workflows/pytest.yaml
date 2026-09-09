@@ -1,0 +1,66 @@
+# Reusable test workflow.
+
+name: pytest
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: 'JSON array of Python versions to matrix over, eg. ["3.12", "3.13"].'
+        type: string
+        default: '["3.12"]'
+      install-extras:
+        description: >
+          Extras to install, as the bracket part of `pip install -e ".[...]"`.
+          Empty means no extras.
+        type: string
+        default: "test"
+      pytest-args:
+        description: "Arguments passed to pytest."
+        type: string
+        default: "--color=yes --verbose"
+      rust:
+        description: "Build a maturin extension before testing."
+        type: boolean
+        default: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: inputs.rust
+        uses: dtolnay/rust-toolchain@stable
+      - if: inputs.rust
+        uses: Swatinem/rust-cache@v2
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      # a venv rather than `--system`: the runner's python is externally managed
+      # (PEP 668), so `uv pip install --system` refuses to touch it. `--clear`
+      # because setup-uv already made a `.venv` when given a `python-version`.
+      - name: Create venv
+        run: uv venv --python ${{ matrix.python-version }} --clear .venv
+
+      - name: Install
+        run: |
+          if [ -n "${{ inputs.install-extras }}" ]; then
+            uv pip install --python .venv -e ".[${{ inputs.install-extras }}]"
+          else
+            uv pip install --python .venv -e .
+          fi
+
+      - if: inputs.rust
+        name: Build extension
+        run: uv run --no-project --python .venv maturin develop --release
+
+      - name: Run pytest
+        run: .venv/bin/pytest ${{ inputs.pytest-args }}
