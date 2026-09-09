@@ -27,6 +27,11 @@ on:
   push: {tags: ['v*.*.*']}
 jobs:
   release:
+    # required. a reusable workflow cannot hold more permission than its caller,
+    # and this one pushes tags and creates releases. without it the run fails at
+    # startup on any repo whose default workflow token is read-only.
+    permissions:
+      contents: write
     uses: nmichlo/.github/.github/workflows/release.yaml@main
     with:
       publish: true          # false for apps that are not published packages
