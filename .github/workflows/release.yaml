@@ -47,7 +47,7 @@ jobs:
     outputs:
       version: ${{ steps.vtag.outputs.new_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: "0"  # the action reads history to find the last tag
@@ -94,7 +94,7 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Create GitHub Release (draft)
         id: release
@@ -111,7 +111,7 @@ jobs:
     steps:
       # check out the tag itself, with full history: setuptools_scm derives the
       # version from the newest reachable tag, so a shallow clone builds 0.0.0
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve-version.outputs.version }}
           fetch-depth: "0"
