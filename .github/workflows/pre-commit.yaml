@@ -42,7 +42,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - uses: astral-sh/setup-uv@v10
+      # pinned exactly: astral-sh stopped publishing floating major
+      # tags after v6, so `@v10` does not resolve
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 

@@ -116,7 +116,9 @@ jobs:
           ref: ${{ needs.resolve-version.outputs.version }}
           fetch-depth: "0"
 
-      - uses: astral-sh/setup-uv@v10
+      # pinned exactly: astral-sh stopped publishing floating major
+      # tags after v6, so `@v10` does not resolve
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           version: "latest"
           python-version: ${{ inputs.python-version }}
