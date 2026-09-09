@@ -15,6 +15,7 @@ instead of a copy of the logic.
 | workflow | does |
 |---|---|
 | `release.yaml` | bump the tag on merge to `main`, draft a release, publish, undraft |
+| `release-rust.yaml` | the same, for maturin projects: wheel matrix, PyPI + crates.io |
 | `pre-commit.yaml` | run `.pre-commit-config.yaml` verbatim |
 | `pytest.yaml` | run the test suite over a Python matrix |
 
@@ -70,3 +71,32 @@ jobs:
       python-versions: '["3.12", "3.13"]'
       install-extras: "test"
 ```
+
+### release-rust
+
+For maturin projects. Cannot use `release.yaml`: wheels need a per-platform matrix, the
+version lives in `Cargo.toml` rather than being derived from the tag, and publishing can
+go to two indexes over OIDC.
+
+```yaml
+name: release
+on:
+  pull_request: {types: [closed], branches: [main]}
+  push: {tags: ['v*']}
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: nmichlo/.github/.github/workflows/release-rust.yaml@main
+    with:
+      package-name: my-package   # for the PyPI deployment environment URL
+      crates-io: true            # false for python-only distributions
+    secrets: inherit
+```
+
+On merge it rewrites `Cargo.toml` to the next version, commits it, and tags **that**
+commit, so the `version-check` guard holds on both the merge and manual-tag paths. No more
+hand-editing `Cargo.toml` before a release.
+
+Publishing uses trusted publishing (OIDC) for both indexes, so no tokens are needed --
+but the PyPI project and the crate must each have a trusted publisher configured.
