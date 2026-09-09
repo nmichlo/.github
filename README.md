@@ -85,8 +85,12 @@ on:
   push: {tags: ['v*']}
 jobs:
   release:
+    # a reusable workflow cannot hold more permission than its caller. this one
+    # needs `contents` to tag and release, and `id-token` for trusted publishing
+    # to PyPI and crates.io. omitting either fails the run at startup.
     permissions:
       contents: write
+      id-token: write
     uses: nmichlo/.github/.github/workflows/release-rust.yaml@main
     with:
       package-name: my-package   # for the PyPI deployment environment URL
