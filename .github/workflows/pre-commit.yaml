@@ -24,6 +24,12 @@ on:
         description: "Install a Rust toolchain first, for repos with cargo hooks."
         type: boolean
         default: false
+      install:
+        description: >
+          Install the project into `.venv` before running the hooks. Only needed
+          when a hook imports the package -- `ty` does, `ruff` and cargo do not.
+        type: boolean
+        default: true
 
 jobs:
   pre-commit:
@@ -42,7 +48,8 @@ jobs:
 
       # `--clear` because setup-uv may already have made a `.venv`, and
       # `uv venv` refuses to overwrite one.
-      - name: Install project into .venv
+      - if: inputs.install
+        name: Install project into .venv
         run: |
           uv venv --python ${{ inputs.python-version }} --clear .venv
           if [ -n "${{ inputs.install-extras }}" ]; then
