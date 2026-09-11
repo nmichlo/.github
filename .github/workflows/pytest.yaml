@@ -42,7 +42,12 @@ jobs:
       matrix:
         python-version: ${{ fromJSON(inputs.python-versions) }}
     steps:
+      # persist-credentials: false -- checkout otherwise leaves the job's token in
+      # .git/config, where any later step (or a dependency's build script) can read
+      # it. only the version-bump jobs, which push, keep it.
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - if: inputs.rust
         uses: dtolnay/rust-toolchain@stable
@@ -59,13 +64,20 @@ jobs:
       # a venv rather than `--system`: the runner's python is externally managed
       # (PEP 668), so `uv pip install --system` refuses to touch it. `--clear`
       # because setup-uv already made a `.venv` when given a `python-version`.
+      # inputs go through `env:` rather than straight into `run:`. a caller
+      # controls them, and `${{ }}` is textual substitution into the script --
+      # an input containing a quote would otherwise splice in shell of its own.
       - name: Create venv
-        run: uv venv --python ${{ matrix.python-version }} --clear .venv
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+        run: uv venv --python "${PYTHON_VERSION}" --clear .venv
 
       - name: Install
+        env:
+          INSTALL_EXTRAS: ${{ inputs.install-extras }}
         run: |
-          if [ -n "${{ inputs.install-extras }}" ]; then
-            uv pip install --python .venv -e ".[${{ inputs.install-extras }}]"
+          if [ -n "${INSTALL_EXTRAS}" ]; then
+            uv pip install --python .venv -e ".[${INSTALL_EXTRAS}]"
           else
             uv pip install --python .venv -e .
           fi
@@ -74,12 +86,17 @@ jobs:
         name: Build extension
         run: uv run --no-project --python .venv maturin develop --release
 
+      # PYTEST_ARGS is deliberately unquoted: it is a list of arguments and has
+      # to word-split. COVERAGE is a single package name, so it is quoted.
       - name: Run pytest
+        env:
+          COVERAGE: ${{ inputs.coverage }}
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: |
-          if [ -n "${{ inputs.coverage }}" ]; then
-            .venv/bin/pytest --cov=${{ inputs.coverage }} ${{ inputs.pytest-args }}
+          if [ -n "${COVERAGE}" ]; then
+            .venv/bin/pytest --cov="${COVERAGE}" ${PYTEST_ARGS}
           else
-            .venv/bin/pytest ${{ inputs.pytest-args }}
+            .venv/bin/pytest ${PYTEST_ARGS}
           fi
 
       # codecov merges all uploaded files, so every matrix entry can upload.
