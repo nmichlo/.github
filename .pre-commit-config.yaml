@@ -14,6 +14,9 @@ repos:
       - id: check-merge-conflict
       - id: mixed-line-ending
 
+  # actionlint shells out to `shellcheck` for `run:` blocks when it is on PATH.
+  # CI runners ship it; a local machine may not, and then a local pass can miss
+  # what CI catches. `brew install shellcheck` to get the same result here.
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
     hooks:

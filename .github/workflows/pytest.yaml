@@ -86,18 +86,19 @@ jobs:
         name: Build extension
         run: uv run --no-project --python .venv maturin develop --release
 
-      # PYTEST_ARGS is deliberately unquoted: it is a list of arguments and has
-      # to word-split. COVERAGE is a single package name, so it is quoted.
+      # pytest-args is one string holding several arguments, so it is split into
+      # an array rather than left unquoted -- unquoted would also glob, and
+      # shellcheck rejects it (SC2086).
       - name: Run pytest
         env:
           COVERAGE: ${{ inputs.coverage }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: |
+          read -r -a args <<< "${PYTEST_ARGS}"
           if [ -n "${COVERAGE}" ]; then
-            .venv/bin/pytest --cov="${COVERAGE}" ${PYTEST_ARGS}
-          else
-            .venv/bin/pytest ${PYTEST_ARGS}
+            args=(--cov="${COVERAGE}" "${args[@]}")
           fi
+          .venv/bin/pytest "${args[@]}"
 
       # codecov merges all uploaded files, so every matrix entry can upload.
       # never blocks the build -- a coverage upload failing is not a test failure.
