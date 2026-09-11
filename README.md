@@ -58,6 +58,42 @@ jobs:
       install-extras: "convert,raw,test"   # the `ty` hook needs deps resolvable
 ```
 
+## Gate jobs
+
+Branch protection matches a required status check **by name**, and both of the
+names CI produces naturally are unstable:
+
+```
+reusable job   ->  "lint / pre-commit"        renaming a job breaks the rule
+matrix job     ->  "test (3.12)", "test (3.13)"   changing the matrix breaks it
+```
+
+When the name a rule requires stops being reported, the rule waits for it
+forever and every PR deadlocks on a check that will never arrive.
+
+So each repo adds one plain job whose name is fixed, and protects that instead:
+
+```yaml
+jobs:
+  pre-commit:
+    uses: nmichlo/.github/.github/workflows/pre-commit.yaml@main
+
+  # the required check. always exactly "lint", whatever the jobs above are called.
+  lint:
+    needs: [pre-commit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - env: {PRE_COMMIT: "${{ needs.pre-commit.result }}"}
+        run: '[ "${PRE_COMMIT}" = "success" ]'
+```
+
+`if: always()` is required, or the gate is skipped when what it guards fails --
+and a skipped check reports success. The same shape in `test.yaml` gives `test`.
+
+Every repo therefore reports the same two checks, `lint` and `test`, regardless
+of what it runs underneath.
+
 ### pytest
 
 ```yaml
