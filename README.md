@@ -86,17 +86,21 @@ jobs:
     steps:
       - name: Check results
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "results: ${RESULTS}"
-          read -r -a outcomes <<< "${RESULTS}"
-          for outcome in "${outcomes[@]}"; do
-            [ "${outcome}" = "success" ] || exit 1
-          done
+          FAILED: >-
+            ${{ contains(needs.*.result, 'failure')
+             || contains(needs.*.result, 'cancelled')
+             || contains(needs.*.result, 'skipped') }}
+        run: '[ "${FAILED}" = "false" ]'
 ```
 
-`needs.*.result` collects whatever this job lists in `needs`, so the same block
-works unchanged for a workflow with one job or five.
+`needs.*` collects whatever this job lists in `needs`, so the same block works
+unchanged for a workflow with one job or five. `skipped` counts as a failure:
+a job that did not run has not passed.
+
+It is deliberately not shared. As a reusable workflow the check would be named
+`lint / gate`, which is the unstable name the gate exists to avoid; as a
+composite action it would trade one line of yaml for a mutable `@main`
+reference in every repo.
 
 `if: always()` is required, or the gate is skipped when what it guards fails --
 and a skipped check reports success. The same shape in `test.yaml` gives `test`.
