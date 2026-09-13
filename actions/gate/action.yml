@@ -29,7 +29,12 @@ description: Fail unless every job named in `needs` succeeded.
 
 inputs:
   needs:
-    description: 'Always pass `${{ toJSON(needs) }}`. The action cannot read the needs context itself.'
+    # NB: no `${{ }}` anywhere in this file outside `runs:`. GitHub evaluates
+    # expressions in an action's metadata too, and `needs` does not exist in an
+    # action's context, so even a doc string mentioning it fails to load.
+    description: >
+      The caller's needs context, serialised. Pass toJSON(needs) wrapped in
+      expression braces. The action cannot read that context itself.
     required: true
 
 runs:
