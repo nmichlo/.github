@@ -37,14 +37,13 @@ on:
           and the codecov upload. Requires pytest-cov in the installed extras.
         type: string
         default: ""
-    secrets:
-      CODECOV_TOKEN:
-        description: "Only needed when `coverage` is set."
-        required: false
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # codecov OIDC upload
     strategy:
       fail-fast: false
       matrix:
@@ -117,8 +116,13 @@ jobs:
 
       # codecov merges all uploaded files, so every matrix entry can upload.
       # never blocks the build -- a coverage upload failing is not a test failure.
+      #
+      # `use_oidc` rather than a token: there is no CODECOV_TOKEN in any of these
+      # repos. Unlike PyPI, codecov has no reusable-workflow restriction -- it
+      # verifies the token against GitHub's JWKS and the `repository` claim, not
+      # a pre-registered workflow filename, so this works from here.
       - if: inputs.coverage != ''
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          use_oidc: true
           fail_ci_if_error: false
