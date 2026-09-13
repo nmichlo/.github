@@ -1,0 +1,40 @@
+# This repo's own lint gate. It dogfoods the reusable workflow it publishes.
+
+name: lint
+
+on:
+  push: {branches: [main]}
+  pull_request: {branches: [main]}
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    # zizmor wants the newer `$/...` self-repository form, but actionlint
+    # v1.7.12 predates it (released 2026-03-30, the feature landed 2026-07-30)
+    # and rejects it outright. revisit when actionlint catches up.
+    uses: ./.github/workflows/pre-commit.yaml  # zizmor: ignore[self-repository]
+    with:
+      # nothing to install -- this repo is yaml, not a python package
+      install: false
+
+  # The branch-protection gate. A required status check is matched by name, and
+  # a reusable job's name is "<caller-job> / <callee-job>" -- it changes whenever
+  # the workflows are restructured, and a matrix job's name changes whenever the
+  # matrix does. Both would silently deadlock every PR on a check that no longer
+  # reports. This job is plain, so its check is always exactly "lint".
+  lint:
+    needs: [pre-commit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: ${RESULTS}"
+          read -r -a outcomes <<< "${RESULTS}"
+          for outcome in "${outcomes[@]}"; do
+            [ "${outcome}" = "success" ] || exit 1
+          done

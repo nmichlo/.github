@@ -1,0 +1,13 @@
+# zizmor audits these workflows for GitHub Actions security problems.
+# Run via pre-commit, which is also what CI runs.
+
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # tag pins rather than commit hashes. a hash pin is strictly safer -- a
+        # tag can be moved to point at new code, a hash cannot -- but it also
+        # freezes every action until something re-resolves it, and there is no
+        # dependabot on this repo to do that. tags from these publishers are the
+        # accepted trade-off; revisit if dependabot is ever enabled here.
+        "*": ref-pin

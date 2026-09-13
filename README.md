@@ -58,6 +58,52 @@ jobs:
       install-extras: "convert,raw,test"   # the `ty` hook needs deps resolvable
 ```
 
+## Gate jobs
+
+Branch protection matches a required status check **by name**, and both of the
+names CI produces naturally are unstable:
+
+```
+reusable job   ->  "lint / pre-commit"        renaming a job breaks the rule
+matrix job     ->  "test (3.12)", "test (3.13)"   changing the matrix breaks it
+```
+
+When the name a rule requires stops being reported, the rule waits for it
+forever and every PR deadlocks on a check that will never arrive.
+
+So each repo adds one plain job whose name is fixed, and protects that instead:
+
+```yaml
+jobs:
+  pre-commit:
+    uses: nmichlo/.github/.github/workflows/pre-commit.yaml@main
+
+  # the required check. always exactly "lint", whatever the jobs above are called.
+  lint:
+    needs: [pre-commit]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: ${RESULTS}"
+          read -r -a outcomes <<< "${RESULTS}"
+          for outcome in "${outcomes[@]}"; do
+            [ "${outcome}" = "success" ] || exit 1
+          done
+```
+
+`needs.*.result` collects whatever this job lists in `needs`, so the same block
+works unchanged for a workflow with one job or five.
+
+`if: always()` is required, or the gate is skipped when what it guards fails --
+and a skipped check reports success. The same shape in `test.yaml` gives `test`.
+
+Every repo therefore reports the same two checks, `lint` and `test`, regardless
+of what it runs underneath.
+
 ### pytest
 
 ```yaml
@@ -87,7 +133,7 @@ jobs:
   release:
     # a reusable workflow cannot hold more permission than its caller. this one
     # needs `contents` to tag and release, and `id-token` for trusted publishing
-    # to PyPI and crates.io. omitting either fails the run at startup.
+    # to crates.io. omitting either fails the run at startup.
     permissions:
       contents: write
       id-token: write
@@ -96,7 +142,42 @@ jobs:
       package-name: my-package   # for the PyPI deployment environment URL
       crates-io: true            # false for python-only distributions
     secrets: inherit
+
+  # this job cannot live in the reusable workflow -- see below.
+  python-publish:
+    needs: [release]
+    runs-on: ubuntu-latest
+    environment: {name: pypi, url: 'https://pypi.org/p/my-package'}
+    permissions: {id-token: write}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'wheels-*', merge-multiple: true, path: dist}
+      - uses: pypa/gh-action-pypi-publish@release/v1
 ```
+
+#### Why the PyPI publish job lives in the caller
+
+PyPI matches the `job_workflow_ref` claim, which names the file a job is
+**written in** -- not the workflow the event triggered:
+
+```
+workflow_ref      nmichlo/norfair-rs/.github/workflows/release.yml
+                  ^ the caller. what crates.io checks, so crates.io is fine.
+
+job_workflow_ref  nmichlo/.github/.github/workflows/release-rust.yaml
+                  ^ what PyPI checks. it can never name the calling repo.
+```
+
+There is no configuration that satisfies it, because PyPI builds the expected
+`job_workflow_ref` out of the publisher's own `repository`, and checks that
+separately -- so both have to name the same repo. Reusable workflows are
+unsupported on PyPI's side: see
+[pypa/gh-action-pypi-publish#166](https://github.com/pypa/gh-action-pypi-publish/issues/166).
+
+The reusable workflow uploads the wheels as `wheels-*` artifacts and the
+caller's own job downloads and publishes them, which is upstream's recommended
+workaround. Name the caller's file whatever the PyPI publisher is configured
+with -- the filename is part of the claim.
 
 On merge it rewrites `Cargo.toml` to the next version, commits it, and tags **that**
 commit, so the `version-check` guard holds on both the merge and manual-tag paths. No more
