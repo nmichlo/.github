@@ -89,9 +89,9 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "results: ${RESULTS}"
-          read -r -a results <<< "${RESULTS}"
-          for result in "${results[@]}"; do
-            [ "${result}" = "success" ] || exit 1
+          read -r -a outcomes <<< "${RESULTS}"
+          for outcome in "${outcomes[@]}"; do
+            [ "${outcome}" = "success" ] || exit 1
           done
 ```
 
