@@ -192,26 +192,19 @@ jobs:
           name: wheels-sdist
           path: dist
 
-  # https://docs.pypi.org/trusted-publishers/
-  # https://github.com/pypa/gh-action-pypi-publish
-  python-publish:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: [python-build, python-sdist]
-    if: always() && needs.python-build.result == 'success' && needs.python-sdist.result == 'success'
-    environment:
-      name: pypi
-      url: https://pypi.org/p/${{ inputs.package-name }}
-    permissions:
-      id-token: write  # For trusted publishing
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          merge-multiple: true
-          path: dist
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+  # NOTE: there is deliberately no PyPI publish job here. PyPI matches the
+  # `job_workflow_ref` OIDC claim, which names the file a job is WRITTEN in, not
+  # the workflow the event triggered:
+  #
+  #   workflow_ref      nmichlo/norfair-rs/.github/workflows/release.yml
+  #   job_workflow_ref  nmichlo/.github/.github/workflows/release-rust.yaml
+  #                     ^ what PyPI checks, and it can never name this repo
+  #
+  # and PyPI builds the expected value from the publisher's own repository, so
+  # no configuration satisfies both claims at once. Reusable workflows are
+  # unsupported there; see pypa/gh-action-pypi-publish#166. The caller therefore
+  # owns its own `python-publish` job, which downloads the `wheels-*` artifacts
+  # this workflow uploads. crates.io is unaffected -- it matches `workflow_ref`.
 
   # https://crates.io/docs/trusted-publishing
   rust-publish:
@@ -238,10 +231,11 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [resolve-version, python-build, python-sdist, python-publish, rust-publish]
+    needs: [resolve-version, python-build, python-sdist, rust-publish]
     if: |
       always() &&
-      needs.python-publish.result == 'success' &&
+      needs.python-build.result == 'success' &&
+      needs.python-sdist.result == 'success' &&
       (needs.rust-publish.result == 'success' || needs.rust-publish.result == 'skipped')
     steps:
       - uses: actions/checkout@v7

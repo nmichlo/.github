@@ -133,7 +133,7 @@ jobs:
   release:
     # a reusable workflow cannot hold more permission than its caller. this one
     # needs `contents` to tag and release, and `id-token` for trusted publishing
-    # to PyPI and crates.io. omitting either fails the run at startup.
+    # to crates.io. omitting either fails the run at startup.
     permissions:
       contents: write
       id-token: write
@@ -142,7 +142,42 @@ jobs:
       package-name: my-package   # for the PyPI deployment environment URL
       crates-io: true            # false for python-only distributions
     secrets: inherit
+
+  # this job cannot live in the reusable workflow -- see below.
+  python-publish:
+    needs: [release]
+    runs-on: ubuntu-latest
+    environment: {name: pypi, url: 'https://pypi.org/p/my-package'}
+    permissions: {id-token: write}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: 'wheels-*', merge-multiple: true, path: dist}
+      - uses: pypa/gh-action-pypi-publish@release/v1
 ```
+
+#### Why the PyPI publish job lives in the caller
+
+PyPI matches the `job_workflow_ref` claim, which names the file a job is
+**written in** -- not the workflow the event triggered:
+
+```
+workflow_ref      nmichlo/norfair-rs/.github/workflows/release.yml
+                  ^ the caller. what crates.io checks, so crates.io is fine.
+
+job_workflow_ref  nmichlo/.github/.github/workflows/release-rust.yaml
+                  ^ what PyPI checks. it can never name the calling repo.
+```
+
+There is no configuration that satisfies it, because PyPI builds the expected
+`job_workflow_ref` out of the publisher's own `repository`, and checks that
+separately -- so both have to name the same repo. Reusable workflows are
+unsupported on PyPI's side: see
+[pypa/gh-action-pypi-publish#166](https://github.com/pypa/gh-action-pypi-publish/issues/166).
+
+The reusable workflow uploads the wheels as `wheels-*` artifacts and the
+caller's own job downloads and publishes them, which is upstream's recommended
+workaround. Name the caller's file whatever the PyPI publisher is configured
+with -- the filename is part of the claim.
 
 On merge it rewrites `Cargo.toml` to the next version, commits it, and tags **that**
 commit, so the `version-check` guard holds on both the merge and manual-tag paths. No more
