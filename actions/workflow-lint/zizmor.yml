@@ -1,5 +1,5 @@
-# zizmor audits these workflows for GitHub Actions security problems.
-# Run via pre-commit, which is also what CI runs.
+# The shared zizmor policy, used by the `workflow-lint` action for every repo
+# that does not commit its own `zizmor.yml`.
 
 rules:
   unpinned-uses:

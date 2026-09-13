@@ -1,0 +1,66 @@
+# Lints GitHub Actions workflow files.
+#
+# This lives in a composite action rather than in each repo's
+# `.pre-commit-config.yaml` so that bumping a linter is one commit here instead
+# of nine pull requests. The trade-off is that `pre-commit run --all-files` on a
+# laptop no longer covers workflow files -- only CI does.
+#
+#   actionlint  syntax, expression types, and shellcheck over `run:` blocks
+#   zizmor      GitHub Actions security audits
+#
+# Both run via `uvx`, so no Go toolchain is needed. actionlint shells out to
+# `shellcheck` when it is on PATH; GitHub runners ship it.
+
+name: Workflow lint
+description: Run actionlint and zizmor over .github/workflows.
+
+inputs:
+  actionlint-version:
+    description: "Version of the actionlint-py distribution."
+    default: "1.7.12.0"
+  zizmor-version:
+    description: "Version of zizmor."
+    default: "1.30.1"
+  min-severity:
+    description: >
+      Lowest zizmor severity that fails the build: informational, low, medium,
+      high. Findings below it are still printed.
+    default: "medium"
+  config:
+    description: >
+      Path to a zizmor config. Defaults to this action's shared policy, which a
+      repo overrides by committing its own `zizmor.yml` and pointing here.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: actionlint
+      shell: bash
+      env:
+        VERSION: ${{ inputs.actionlint-version }}
+      run: uvx --from "actionlint-py==${VERSION}" actionlint .github/workflows/*.y*ml
+
+    - name: zizmor
+      shell: bash
+      env:
+        VERSION: ${{ inputs.zizmor-version }}
+        MIN_SEVERITY: ${{ inputs.min-severity }}
+        CONFIG: ${{ inputs.config }}
+        DEFAULT_CONFIG: ${{ github.action_path }}/zizmor.yml
+      run: |
+        # a repo's own zizmor.yml wins, then an explicit input, then the shared
+        # policy shipped beside this action.
+        if [ -n "${CONFIG}" ]; then
+          conf="${CONFIG}"
+        elif [ -f zizmor.yml ]; then
+          conf=zizmor.yml
+        else
+          conf="${DEFAULT_CONFIG}"
+        fi
+        echo "using zizmor config: ${conf}"
+        uvx "zizmor==${VERSION}" \
+          --config "${conf}" \
+          --persona=regular \
+          --min-severity="${MIN_SEVERITY}" \
+          .github/workflows/

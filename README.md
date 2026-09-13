@@ -58,18 +58,29 @@ jobs:
       install-extras: "convert,raw,test"   # the `ty` hook needs deps resolvable
 ```
 
-## Gate jobs
+## Composite actions
 
-Branch protection matches a required status check **by name**, and both of the
-names CI produces naturally are unstable:
+Shared **steps**, as opposed to the shared **jobs** above. A composite action
+runs inside the caller's own job, which is what makes `actions/gate` possible at
+all.
+
+| action | does |
+|---|---|
+| `actions/gate` | fail a job unless every job it `needs` succeeded |
+| `actions/workflow-lint` | run actionlint and zizmor over `.github/workflows` |
+
+### actions/gate
+
+Branch protection matches a required status check **by name**, and every name a
+workflow produces naturally is unstable:
 
 ```
-reusable job   ->  "lint / pre-commit"        renaming a job breaks the rule
-matrix job     ->  "test (3.12)", "test (3.13)"   changing the matrix breaks it
+reusable job   ->  "lint / pre-commit"              renaming a job breaks the rule
+matrix job     ->  "test (3.12)", "test (3.13)"     changing the matrix breaks it
 ```
 
-When the name a rule requires stops being reported, the rule waits for it
-forever and every PR deadlocks on a check that will never arrive.
+When the required name stops being reported, the rule waits for it forever and
+every PR deadlocks on a check that will never arrive.
 
 So each repo adds one plain job whose name is fixed, and protects that instead:
 
@@ -84,23 +95,33 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check results
-        env:
-          FAILED: >-
-            ${{ contains(needs.*.result, 'failure')
-             || contains(needs.*.result, 'cancelled')
-             || contains(needs.*.result, 'skipped') }}
-        run: '[ "${FAILED}" = "false" ]'
+      - uses: nmichlo/.github/actions/gate@main
+        with:
+          needs: ${{ toJSON(needs) }}
 ```
 
-`needs.*` collects whatever this job lists in `needs`, so the same block works
-unchanged for a workflow with one job or five. `skipped` counts as a failure:
-a job that did not run has not passed.
+`if: always()` is required. Without it the gate is **skipped** whenever what it
+guards fails, and a skipped required check counts as success -- a gate that is
+green precisely when it should not be.
 
-It is deliberately not shared. As a reusable workflow the check would be named
-`lint / gate`, which is the unstable name the gate exists to avoid; as a
-composite action it would trade one line of yaml for a mutable `@main`
-reference in every repo.
+The gate has to be a composite action rather than a reusable workflow: a
+reusable job's check would be named `lint / gate`, which is the unstable shape
+the gate exists to avoid.
+
+`toJSON(needs)` rather than `needs.*.result` because it keeps the job names, so
+the log says *which* job failed. The `needs` context is not readable from inside
+an action, so the caller passes it in.
+
+### actions/workflow-lint
+
+Called by `pre-commit.yaml`, so no repo lists actionlint or zizmor in its own
+`.pre-commit-config.yaml` and bumping either is one commit here.
+
+The trade-off is deliberate and worth knowing: `pre-commit run --all-files` on a
+laptop does **not** cover workflow files. Only CI does.
+
+zizmor's policy comes from `actions/workflow-lint/zizmor.yml` unless a repo
+commits its own `zizmor.yml`, which then wins.
 
 `if: always()` is required, or the gate is skipped when what it guards fails --
 and a skipped check reports success. The same shape in `test.yaml` gives `test`.
