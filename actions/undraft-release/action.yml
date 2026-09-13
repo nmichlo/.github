@@ -1,0 +1,28 @@
+# Publishes a draft GitHub release, once whatever had to happen first has.
+#
+# The shared `release.yaml` creates the release as a draft when the caller owns
+# a publish job, so a failed upload never leaves a visible release advertising a
+# version nobody can install. This is the step that finishes it. If the upload
+# fails, the draft simply stays a draft -- fix the cause and re-run.
+
+name: Undraft release
+description: Turn a draft GitHub release into a published one.
+
+inputs:
+  tag:
+    description: "Tag of the release to publish, eg. v1.2.3."
+    required: true
+  token:
+    description: "Needs `contents: write`. Defaults to the job's own token."
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Undraft
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
+        TAG: ${{ inputs.tag }}
+      run: gh release edit "${TAG}" --draft=false

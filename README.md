@@ -34,10 +34,60 @@ jobs:
     permissions:
       contents: write
     uses: nmichlo/.github/.github/workflows/release.yaml@main
-    with:
-      publish: true          # false for apps that are not published packages
-    secrets: inherit
+
+  # every project that publishes owns this job. omit it for applications, and
+  # pass `publish: false` above instead.
+  python-publish:
+    needs: [release]
+    if: needs.release.outputs.version != ''
+    runs-on: ubuntu-latest
+    environment: {name: pypi, url: 'https://pypi.org/p/my-package'}
+    permissions:
+      id-token: write   # trusted publishing
+      contents: write   # undrafting the release
+    steps:
+      - uses: nmichlo/.github/actions/build-dist@main
+        with: {ref: '${{ needs.release.outputs.version }}'}
+      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: nmichlo/.github/actions/undraft-release@main
+        with: {tag: '${{ needs.release.outputs.version }}'}
 ```
+
+#### Why publishing lives in the caller
+
+**There are no PyPI tokens in any of these repos.** Publishing is trusted
+publishing (OIDC) everywhere, and that is what forces this shape.
+
+PyPI matches the `job_workflow_ref` claim, which names the file a job is
+**written in** -- not the workflow the event triggered:
+
+```
+workflow_ref      nmichlo/doorway/.github/workflows/release.yaml
+                  ^ the caller
+
+job_workflow_ref  nmichlo/.github/.github/workflows/release.yaml
+                  ^ what PyPI checks. it can never name the calling repo.
+```
+
+No configuration fixes it: PyPI builds the expected `job_workflow_ref` out of
+the publisher's own `repository` claim and verifies that separately, so both
+must name the same repo. Reusable workflows are unsupported on PyPI's side --
+[pypa/gh-action-pypi-publish#166](https://github.com/pypa/gh-action-pypi-publish/issues/166).
+Owning the job in the caller is upstream's own recommended workaround.
+
+`pypa/gh-action-pypi-publish` is called directly rather than wrapped in a
+composite action here, because it does not support being invoked from one.
+
+**Each project needs a trusted publisher on PyPI**: the calling repo, the
+workflow filename, and environment `pypi`.
+
+#### Draft, publish, undraft
+
+`release.yaml` creates the release as a **draft** whenever `publish` is true, and
+the caller's last step undrafts it. A failed upload therefore leaves a draft
+rather than a visible release advertising a version nobody can install -- fix the
+cause and re-run. With `publish: false` there is nothing to wait for, so the
+release is finished immediately.
 
 The caller must pass **both** triggers. Tags pushed with `GITHUB_TOKEN` do not
 trigger other workflows, so a split bump-then-publish pair can never publish on
@@ -58,18 +108,31 @@ jobs:
       install-extras: "convert,raw,test"   # the `ty` hook needs deps resolvable
 ```
 
-## Gate jobs
+## Composite actions
 
-Branch protection matches a required status check **by name**, and both of the
-names CI produces naturally are unstable:
+Shared **steps**, as opposed to the shared **jobs** above. A composite action
+runs inside the caller's own job, which is what makes `actions/gate` possible at
+all.
+
+| action | does |
+|---|---|
+| `actions/gate` | fail a job unless every job it `needs` succeeded |
+| `actions/workflow-lint` | run actionlint and zizmor over `.github/workflows` |
+| `actions/build-dist` | check out a tag and build sdist + wheel into `dist/` |
+| `actions/undraft-release` | turn a draft GitHub release into a published one |
+
+### actions/gate
+
+Branch protection matches a required status check **by name**, and every name a
+workflow produces naturally is unstable:
 
 ```
-reusable job   ->  "lint / pre-commit"        renaming a job breaks the rule
-matrix job     ->  "test (3.12)", "test (3.13)"   changing the matrix breaks it
+reusable job   ->  "lint / pre-commit"              renaming a job breaks the rule
+matrix job     ->  "test (3.12)", "test (3.13)"     changing the matrix breaks it
 ```
 
-When the name a rule requires stops being reported, the rule waits for it
-forever and every PR deadlocks on a check that will never arrive.
+When the required name stops being reported, the rule waits for it forever and
+every PR deadlocks on a check that will never arrive.
 
 So each repo adds one plain job whose name is fixed, and protects that instead:
 
@@ -84,19 +147,33 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check results
-        env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "results: ${RESULTS}"
-          read -r -a outcomes <<< "${RESULTS}"
-          for outcome in "${outcomes[@]}"; do
-            [ "${outcome}" = "success" ] || exit 1
-          done
+      - uses: nmichlo/.github/actions/gate@main
+        with:
+          needs: ${{ toJSON(needs) }}
 ```
 
-`needs.*.result` collects whatever this job lists in `needs`, so the same block
-works unchanged for a workflow with one job or five.
+`if: always()` is required. Without it the gate is **skipped** whenever what it
+guards fails, and a skipped required check counts as success -- a gate that is
+green precisely when it should not be.
+
+The gate has to be a composite action rather than a reusable workflow: a
+reusable job's check would be named `lint / gate`, which is the unstable shape
+the gate exists to avoid.
+
+`toJSON(needs)` rather than `needs.*.result` because it keeps the job names, so
+the log says *which* job failed. The `needs` context is not readable from inside
+an action, so the caller passes it in.
+
+### actions/workflow-lint
+
+Called by `pre-commit.yaml`, so no repo lists actionlint or zizmor in its own
+`.pre-commit-config.yaml` and bumping either is one commit here.
+
+The trade-off is deliberate and worth knowing: `pre-commit run --all-files` on a
+laptop does **not** cover workflow files. Only CI does.
+
+zizmor's policy comes from `actions/workflow-lint/zizmor.yml` unless a repo
+commits its own `zizmor.yml`, which then wins.
 
 `if: always()` is required, or the gate is skipped when what it guards fails --
 and a skipped check reports success. The same shape in `test.yaml` gives `test`.

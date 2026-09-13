@@ -22,7 +22,11 @@ repos:
     hooks:
       - id: actionlint
 
+  # points at the same policy the `workflow-lint` action ships to every other
+  # repo, so this repo cannot be linted by a different one than it publishes.
+  # (zizmor has no `extends`, so the path is given rather than a second file.)
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
     rev: v1.30.1
     hooks:
       - id: zizmor
+        args: [--config, actions/workflow-lint/zizmor.yml]

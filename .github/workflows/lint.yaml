@@ -19,22 +19,20 @@ jobs:
       # nothing to install -- this repo is yaml, not a python package
       install: false
 
-  # The branch-protection gate. A required status check is matched by name, and
-  # a reusable job's name is "<caller-job> / <callee-job>" -- it changes whenever
-  # the workflows are restructured, and a matrix job's name changes whenever the
-  # matrix does. Both would silently deadlock every PR on a check that no longer
-  # reports. This job is plain, so its check is always exactly "lint".
+  # The branch-protection gate; see actions/gate for why it exists. `always()`
+  # is required, or the gate is skipped when what it guards fails -- and a
+  # skipped required check counts as success.
   lint:
     needs: [pre-commit]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Check results
-        env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
-        run: |
-          echo "results: ${RESULTS}"
-          read -r -a outcomes <<< "${RESULTS}"
-          for outcome in "${outcomes[@]}"; do
-            [ "${outcome}" = "success" ] || exit 1
-          done
+      # a local action ref needs the repo on disk first. other repos use
+      # `nmichlo/.github/actions/gate@main`, which is fetched automatically and
+      # needs no checkout.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./actions/gate  # zizmor: ignore[self-repository]
+        with:
+          needs: ${{ toJSON(needs) }}
