@@ -30,6 +30,12 @@ on:
           when a hook imports the package -- `ty` does, `ruff` and cargo do not.
         type: boolean
         default: true
+      workflow-lint:
+        description: >
+          Run actionlint and zizmor over `.github/workflows`. Off only for a
+          repo still working through its findings.
+        type: boolean
+        default: true
       skip-hooks:
         description: >
           Comma-separated hook ids to skip, passed to pre-commit as SKIP. For
@@ -82,3 +88,10 @@ jobs:
         env:
           SKIP: ${{ inputs.skip-hooks }}
         run: uvx --from pre-commit pre-commit run --all-files --show-diff-on-failure
+
+      # actionlint + zizmor live here rather than in every repo's
+      # `.pre-commit-config.yaml`, so bumping either is one commit in this repo
+      # instead of nine pull requests. The trade-off is deliberate: a local
+      # `pre-commit run --all-files` does NOT cover workflow files, only CI does.
+      - if: inputs.workflow-lint
+        uses: nmichlo/.github/actions/workflow-lint@main
