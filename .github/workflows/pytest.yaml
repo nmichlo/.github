@@ -16,9 +16,17 @@ on:
         type: string
         default: "test"
       pytest-args:
-        description: "Arguments passed to pytest."
+        description: >
+          Extra pytest flags. Split on whitespace, so no value here may contain
+          a space -- quoting does NOT survive. Use `markers` for `-m`.
         type: string
         default: "--color=yes --verbose"
+      markers:
+        description: >
+          A marker expression for `-m`, eg. "not extra_test". Its own input
+          because it is the one argument that legitimately contains spaces.
+        type: string
+        default: ""
       rust:
         description: "Build a maturin extension before testing."
         type: boolean
@@ -86,18 +94,25 @@ jobs:
         name: Build extension
         run: uv run --no-project --python .venv maturin develop --release
 
-      # pytest-args is one string holding several arguments, so it is split into
-      # an array rather than left unquoted -- unquoted would also glob, and
-      # shellcheck rejects it (SC2086).
+      # `pytest-args` arrives as an environment variable, not as text spliced
+      # into this script, so shell quoting inside it is NOT re-parsed: a value
+      # of `-m 'not extra_test'` would split into `-m`, `'not`, `extra_test'`
+      # and pytest would look for a file named `extra_test'`. Hence `markers`
+      # being a separate input -- it is quoted here, once, correctly.
       - name: Run pytest
         env:
           COVERAGE: ${{ inputs.coverage }}
+          MARKERS: ${{ inputs.markers }}
           PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: |
           read -r -a args <<< "${PYTEST_ARGS}"
           if [ -n "${COVERAGE}" ]; then
             args=(--cov="${COVERAGE}" "${args[@]}")
           fi
+          if [ -n "${MARKERS}" ]; then
+            args+=(-m "${MARKERS}")
+          fi
+          echo "pytest ${args[*]}"
           .venv/bin/pytest "${args[@]}"
 
       # codecov merges all uploaded files, so every matrix entry can upload.
