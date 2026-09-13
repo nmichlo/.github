@@ -84,9 +84,19 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - env: {PRE_COMMIT: "${{ needs.pre-commit.result }}"}
-        run: '[ "${PRE_COMMIT}" = "success" ]'
+      - name: Check results
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: ${RESULTS}"
+          read -r -a results <<< "${RESULTS}"
+          for result in "${results[@]}"; do
+            [ "${result}" = "success" ] || exit 1
+          done
 ```
+
+`needs.*.result` collects whatever this job lists in `needs`, so the same block
+works unchanged for a workflow with one job or five.
 
 `if: always()` is required, or the gate is skipped when what it guards fails --
 and a skipped check reports success. The same shape in `test.yaml` gives `test`.

@@ -31,7 +31,10 @@ jobs:
     steps:
       - name: Check results
         env:
-          PRE_COMMIT: ${{ needs.pre-commit.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "pre-commit: ${PRE_COMMIT}"
-          [ "${PRE_COMMIT}" = "success" ]
+          echo "results: ${RESULTS}"
+          read -r -a results <<< "${RESULTS}"
+          for result in "${results[@]}"; do
+            [ "${result}" = "success" ] || exit 1
+          done
