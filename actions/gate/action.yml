@@ -1,0 +1,52 @@
+# The branch-protection gate.
+#
+# A required status check is matched by NAME, and every name a workflow produces
+# naturally is unstable:
+#
+#   reusable job  ->  "lint / pre-commit"            renaming a job breaks it
+#   matrix job    ->  "test (3.12)", "test (3.13)"   changing the matrix breaks it
+#
+# When the required name stops being reported the rule waits forever and every
+# PR deadlocks. The cure is a plain job with a fixed name that depends on the
+# real ones -- and that job has to live in the caller, because a reusable
+# workflow would name its check "<caller-job> / <callee-job>" all over again.
+# A composite action runs as steps inside the caller's job, so the check stays
+# exactly "lint" or "test" while this logic is owned in one place.
+#
+# Usage:
+#
+#   lint:
+#     needs: [pre-commit]
+#     if: always()          # or the gate is SKIPPED when what it guards fails,
+#     runs-on: ubuntu-latest  # and a skipped required check counts as success
+#     steps:
+#       - uses: nmichlo/.github/actions/gate@main
+#         with:
+#           needs: ${{ toJSON(needs) }}
+
+name: Gate
+description: Fail unless every job named in `needs` succeeded.
+
+inputs:
+  needs:
+    description: 'Always pass `${{ toJSON(needs) }}`. The action cannot read the needs context itself.'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # `toJSON(needs)` rather than `needs.*.result`: it keeps the job names, so
+    # the log says which one failed instead of only that something did.
+    - name: Check results
+      shell: bash
+      env:
+        NEEDS: ${{ inputs.needs }}
+      run: |
+        jq -r 'to_entries[] | "  \(.key): \(.value.result)"' <<< "${NEEDS}"
+        # anything other than success fails, `skipped` included: a job that did
+        # not run has not passed, and a gate that lets it through is worse than
+        # no gate at all.
+        if ! jq -e 'all(.[].result; . == "success")' <<< "${NEEDS}" > /dev/null; then
+          echo "::error::one or more required jobs did not succeed"
+          exit 1
+        fi

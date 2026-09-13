@@ -13,6 +13,12 @@
 #
 # Bumping is keyword-driven: put #major, #minor, #patch or #none in the PR title
 # (it lands in the merge commit message). Without one, `default-bump` applies.
+#
+# This workflow does NOT publish to PyPI. PyPI's trusted publishing matches the
+# `job_workflow_ref` OIDC claim, which names the file a job is WRITTEN in -- from
+# here that reads `nmichlo/.github`, which can never match the calling project.
+# Reusable workflows are unsupported on PyPI's side (pypa/gh-action-pypi-publish
+# #166), so each caller owns a `python-publish` job. See the README.
 
 name: release
 
@@ -24,17 +30,21 @@ on:
         type: string
         default: "3.12"
       publish:
-        description: "Publish to PyPI. Set false for applications that are not packages."
+        description: >
+          True when the CALLER owns a publish job. This workflow then leaves the
+          GitHub release as a draft for that job to finish. False for
+          applications that are not published anywhere, which get a finished
+          release immediately.
         type: boolean
         default: true
       default-bump:
         description: "Bump applied when the merge commit has no #major/#minor/#patch keyword."
         type: string
         default: "patch"
-    secrets:
-      PYPI_TOKEN:
-        description: "Required when `publish` is true."
-        required: false
+    outputs:
+      version:
+        description: "The tag that was released, eg. v1.2.3. Empty when nothing was released."
+        value: ${{ jobs.resolve-version.outputs.version }}
 
 jobs:
   # Only on a real merge. Skipped for tag pushes (the tag is already the version)
@@ -91,8 +101,10 @@ jobs:
             echo "version=${BUMPED_VERSION}" >> "$GITHUB_OUTPUT"
           fi
 
-  # Draft, so a failed publish never leaves a visible release pointing at a
-  # version that is not on the index.
+  # Drafted when the caller publishes, so a failed upload never leaves a visible
+  # release pointing at a version that is not on the index. The caller's publish
+  # job undrafts it. When nothing is published there is nothing to wait for, so
+  # the release is finished here.
   create-release:
     needs: [resolve-version]
     if: always() && needs.resolve-version.result == 'success' && needs.resolve-version.outputs.version != ''
@@ -111,73 +123,11 @@ jobs:
 
       - name: Create GitHub Release (draft)
         id: release
-        # zizmor: ignore[superfluous-actions] -- `gh release create` is the
-        # suggested replacement, but this step's `id` output feeds the undraft
-        # job, and `gh` does not return one.
+        # zizmor: ignore[superfluous-actions] -- `gh release create` cannot
+        # generate release notes from the previous tag, which is the only reason
+        # this step exists rather than a one-line script.
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-version.outputs.version }}
-          draft: true
+          draft: ${{ inputs.publish }}
           generate_release_notes: true
-
-  publish:
-    needs: [resolve-version, create-release]
-    if: always() && inputs.publish && needs.create-release.result == 'success'
-    runs-on: ubuntu-latest
-    steps:
-      # check out the tag itself, with full history: setuptools_scm derives the
-      # version from the newest reachable tag, so a shallow clone builds 0.0.0
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-          ref: ${{ needs.resolve-version.outputs.version }}
-          fetch-depth: "0"
-
-      # pinned exactly: astral-sh stopped publishing floating major
-      # tags after v6, so `@v10` does not resolve
-      - uses: astral-sh/setup-uv@v10.0.1
-        with:
-          version: "latest"
-          python-version: ${{ inputs.python-version }}
-
-      # the token goes through `env:`, not the command line: `${{ }}` in a `run:`
-      # block is textual substitution, so the secret would end up in the process
-      # arguments where any other process on the runner can read it.
-      - name: Build and Publish
-        # zizmor: ignore[use-trusted-publishing] -- OIDC is better and is what
-        # release-rust.yaml uses, but switching needs a publisher configured on
-        # PyPI for each calling project first.
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          uv build
-          uv publish
-
-  # Undraft once the package is actually published. If publish fails the draft
-  # stays put -- fix the cause and use "Re-run failed jobs". When `publish` is
-  # false the job is skipped, which still counts as success here.
-  finalize-release:
-    needs: [create-release, publish]
-    if: |
-      always() &&
-      needs.create-release.result == 'success' &&
-      (needs.publish.result == 'success' || needs.publish.result == 'skipped')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      # the id arrives via `env:` and is read with `process.env`. interpolating
-      # `${{ }}` into `script:` splices text into javascript the same way it
-      # would into shell.
-      - name: Publish release (undraft)
-        uses: actions/github-script@v7
-        env:
-          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: Number(process.env.RELEASE_ID),
-              draft: false,
-            });

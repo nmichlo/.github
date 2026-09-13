@@ -1,0 +1,49 @@
+# Builds an sdist and wheel from a released tag, ready for `pypa/gh-action-pypi-publish`.
+#
+# This is a composite action, not a step in the reusable release workflow,
+# because the PyPI upload that follows it has to live in the calling repo's own
+# workflow -- see `actions/../README.md`. Keeping the build here means the
+# callers carry a `uses:` line rather than a copy of the build logic.
+
+name: Build distribution
+description: Check out a tag and build sdist + wheel into dist/.
+
+inputs:
+  ref:
+    description: "Tag to build, eg. v1.2.3."
+    required: true
+  python-version:
+    description: "Python used to build."
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    # fetch-depth 0 is required, not tidiness: setuptools_scm derives the
+    # version from the newest reachable tag, so a shallow clone builds 0.0.0.
+    - uses: actions/checkout@v7
+      with:
+        persist-credentials: false
+        ref: ${{ inputs.ref }}
+        fetch-depth: "0"
+
+    # pinned exactly: astral-sh stopped publishing floating major tags after v6,
+    # so `@v10` does not resolve.
+    - uses: astral-sh/setup-uv@v10.0.1
+      with:
+        version: "latest"
+        python-version: ${{ inputs.python-version }}
+
+    - name: Build
+      shell: bash
+      env:
+        REF: ${{ inputs.ref }}
+      run: |
+        uv build
+        ls -l dist/
+        # a tag that produced a 0.0.0 dist means the checkout was wrong, and
+        # uploading it would burn that version number on PyPI permanently.
+        if ls dist/ | grep -q '0\.0\.0'; then
+          echo "::error::built 0.0.0 from ${REF} -- setuptools_scm could not see the tag"
+          exit 1
+        fi
