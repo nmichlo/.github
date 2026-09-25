@@ -7,7 +7,7 @@ is what the release workflow reads:
   #minor   1.2.3 -> 1.3.0   eg. new feature
   #major   1.2.3 -> 2.0.0   eg. breaking change
 
-Without a keyword the release workflow falls back to a patch bump.
+Without a keyword nothing is released, the same as #none.
 -->
 
 ## What and why

@@ -17,7 +17,8 @@
 #   wheels need a per-platform build matrix, and publishing can go to two
 #   indexes over OIDC.
 #
-# Bumping is keyword-driven: put #major, #minor, #patch or #none in the PR title.
+# Bumping is keyword-driven: put #major, #minor or #patch in the PR title.
+# Without one nothing is released.
 
 name: release-rust
 
@@ -36,10 +37,6 @@ on:
         description: "Also publish the crate to crates.io over OIDC."
         type: boolean
         default: true
-      default-bump:
-        description: "Bump applied when the merge commit has no #major/#minor/#patch keyword."
-        type: string
-        default: "patch"
     outputs:
       version:
         description: "The tag that was released, eg. v1.2.3. Empty when nothing was released."
@@ -63,8 +60,6 @@ jobs:
     steps:
       - id: version
         uses: nmichlo/.github/actions/version-bump@main
-        with:
-          default-bump: ${{ inputs.default-bump }}
 
   python-build:
     needs: [version]

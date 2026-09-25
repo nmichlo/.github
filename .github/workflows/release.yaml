@@ -11,9 +11,8 @@
 #   fixes that without a PAT. A tag this workflow pushes does not re-enter it, so
 #   there is no loop; a tag a human pushes does.
 #
-# Bumping is keyword-driven: put #major, #minor, #patch or #none in the PR title
-# (a squash merge puts it in the commit message). Without one, `default-bump`
-# applies.
+# Bumping is keyword-driven: put #major, #minor or #patch in the PR title (a
+# squash merge puts it in the commit message). Without one nothing is released.
 #
 # This workflow does NOT publish to PyPI. PyPI's trusted publishing matches the
 # `job_workflow_ref` OIDC claim, which names the file a job is WRITTEN in -- from
@@ -38,10 +37,6 @@ on:
           release immediately.
         type: boolean
         default: true
-      default-bump:
-        description: "Bump applied when the merge commit has no #major/#minor/#patch keyword."
-        type: string
-        default: "patch"
     outputs:
       version:
         description: "The tag that was released, eg. v1.2.3. Empty when nothing was released."
@@ -62,8 +57,6 @@ jobs:
     steps:
       - id: version
         uses: nmichlo/.github/actions/version-bump@main
-        with:
-          default-bump: ${{ inputs.default-bump }}
 
   # Drafted when the caller publishes, so a failed upload never leaves a visible
   # release pointing at a version that is not on the index. The caller's publish

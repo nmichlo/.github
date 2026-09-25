@@ -92,9 +92,10 @@ The caller must pass **both** triggers. Tags pushed with `GITHUB_TOKEN` do not
 trigger other workflows, so a split bump-then-publish pair can never publish on
 a merge. One workflow owning both triggers is what makes it work without a PAT.
 
-Version comes from the PR title keyword (`#major`, `#minor`, `#patch`, `#none`),
-defaulting to a patch bump. A squash merge copies the title into the commit
-message, which is where `actions/version-bump` reads it.
+Version comes from the PR title keyword (`#major`, `#minor`, `#patch`). Without
+one nothing is released, the same as `#none` -- so a direct push to `main`, which
+no test has gated, cannot publish by accident. A squash merge copies the title
+into the commit message, which is where `actions/version-bump` reads it.
 
 The trigger is `push` to `main`, not a closed pull request. GitHub gives a
 `pull_request` run from a **fork** a read-only token, even after the merge, so
