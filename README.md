@@ -24,8 +24,7 @@ instead of a copy of the logic.
 ```yaml
 name: release
 on:
-  pull_request: {types: [closed], branches: [main]}
-  push: {tags: ['v*.*.*']}
+  push: {branches: [main], tags: ['v*.*.*']}
 jobs:
   release:
     # required. a reusable workflow cannot hold more permission than its caller,
@@ -94,7 +93,12 @@ trigger other workflows, so a split bump-then-publish pair can never publish on
 a merge. One workflow owning both triggers is what makes it work without a PAT.
 
 Version comes from the PR title keyword (`#major`, `#minor`, `#patch`, `#none`),
-defaulting to a patch bump.
+defaulting to a patch bump. A squash merge copies the title into the commit
+message, which is where `actions/version-bump` reads it.
+
+The trigger is `push` to `main`, not a closed pull request. GitHub gives a
+`pull_request` run from a **fork** a read-only token, even after the merge, so
+the tag push fails with a 403 and nothing is released.
 
 ### pre-commit
 
@@ -120,6 +124,8 @@ all.
 | `actions/workflow-lint` | run actionlint and zizmor over `.github/workflows` |
 | `actions/build-dist` | check out a tag and build sdist + wheel into `dist/` |
 | `actions/undraft-release` | turn a draft GitHub release into a published one |
+| `actions/version-bump` | read the `#bump` keyword and push the next tag, or pass a pushed tag through |
+| `actions/stamp-cargo-version` | write a release version into `Cargo.toml` before a build |
 
 ### actions/gate
 
@@ -197,15 +203,13 @@ jobs:
 
 ### release-rust
 
-For maturin projects. Cannot use `release.yaml`: wheels need a per-platform matrix, the
-version lives in `Cargo.toml` rather than being derived from the tag, and publishing can
-go to two indexes over OIDC.
+For maturin projects. Cannot use `release.yaml`: wheels need a per-platform matrix, and
+publishing can go to two indexes over OIDC.
 
 ```yaml
 name: release
 on:
-  pull_request: {types: [closed], branches: [main]}
-  push: {tags: ['v*']}
+  push: {branches: [main], tags: ['v*']}
 jobs:
   release:
     # a reusable workflow cannot hold more permission than its caller. this one
@@ -218,11 +222,11 @@ jobs:
     with:
       package-name: my-package   # for the PyPI deployment environment URL
       crates-io: true            # false for python-only distributions
-    secrets: inherit
 
   # this job cannot live in the reusable workflow -- see below.
   python-publish:
     needs: [release]
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     environment: {name: pypi, url: 'https://pypi.org/p/my-package'}
     permissions: {id-token: write}
@@ -256,9 +260,18 @@ caller's own job downloads and publishes them, which is upstream's recommended
 workaround. Name the caller's file whatever the PyPI publisher is configured
 with -- the filename is part of the claim.
 
-On merge it rewrites `Cargo.toml` to the next version, commits it, and tags **that**
-commit, so the `version-check` guard holds on both the merge and manual-tag paths. No more
-hand-editing `Cargo.toml` before a release.
+#### Where the version comes from
+
+**The tag is the only version.** Cargo has no setuptools_scm: `version` must be a literal
+in `Cargo.toml`. So the committed file says `0.0.0`, and every job that builds or publishes
+writes the tag's version in first, with `actions/stamp-cargo-version`. Nothing is committed.
+
+```
+committed:    version = "0.0.0"
+tag v1.2.4 -> version = "1.2.4"   (in the build job only) -> wheels, sdist, crates.io
+```
+
+A plain `cargo build` from a git checkout therefore reports `0.0.0`.
 
 Publishing uses trusted publishing (OIDC) for both indexes, so no tokens are needed --
 but the PyPI project and the crate must each have a trusted publisher configured.
