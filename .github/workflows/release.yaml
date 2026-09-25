@@ -1,8 +1,8 @@
 # Reusable release workflow: version bump, GitHub Release, and optional PyPI publish.
 #
-# Callers trigger it on BOTH of these, and must pass both through:
-#   pull_request: {types: [closed], branches: [main]}   -> compute + push the next tag
-#   push:         {tags: ['v*.*.*']}                    -> release the tag as-is
+# Callers trigger it on both of these, and must pass both through:
+#   push: {branches: [main]}    -> push the next tag, if the merge asks for one
+#   push: {tags: ['v*.*.*']}    -> release the tag as-is
 #
 # Why one workflow rather than two:
 #   Tags pushed with GITHUB_TOKEN do not trigger other workflows. A split
@@ -12,7 +12,8 @@
 #   there is no loop; a tag a human pushes does.
 #
 # Bumping is keyword-driven: put #major, #minor, #patch or #none in the PR title
-# (it lands in the merge commit message). Without one, `default-bump` applies.
+# (a squash merge puts it in the commit message). Without one, `default-bump`
+# applies.
 #
 # This workflow does NOT publish to PyPI. PyPI's trusted publishing matches the
 # `job_workflow_ref` OIDC claim, which names the file a job is WRITTEN in -- from
@@ -44,70 +45,33 @@ on:
     outputs:
       version:
         description: "The tag that was released, eg. v1.2.3. Empty when nothing was released."
-        value: ${{ jobs.resolve-version.outputs.version }}
+        value: ${{ jobs.version.outputs.version }}
 
 jobs:
-  # Only on a real merge. Skipped for tag pushes (the tag is already the version)
-  # and for PRs closed without merging.
-  version-bump:
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+  # The tag this run releases: a new one on a merge that asks for it, the pushed
+  # one on a tag push, empty otherwise. See `actions/version-bump`.
+  version:
+    # a pull request closed without merging has nothing to release. (that event
+    # is only still accepted until every caller has moved to `push`.)
+    if: github.event_name == 'push' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version: ${{ steps.vtag.outputs.new_tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      # keeps its credentials on purpose: the tag action below pushes with them.
-      - uses: actions/checkout@v7  # zizmor: ignore[artipacked]
+      - id: version
+        uses: nmichlo/.github/actions/version-bump@main
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
-          fetch-depth: "0"  # the action reads history to find the last tag
-
-      - name: Bump version and push tag
-        id: vtag
-        # pinned to 1.71.0
-        uses: anothrNick/github-tag-action@f278d49d30cdd8775cc3e7dd00b5ee11686ee297
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEFAULT_BUMP: ${{ inputs.default-bump }}
-          WITH_V: true
-
-  # Single source of the version for everything downstream, from whichever
-  # trigger fired.
-  resolve-version:
-    needs: [version-bump]
-    # always() is required, or this auto-skips whenever version-bump is skipped
-    if: |
-      always() &&
-      (needs.version-bump.result == 'success' ||
-       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')))
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.resolve.outputs.version }}
-    steps:
-      # context values go through `env:` rather than straight into `run:`.
-      # `${{ }}` is textual substitution into the script, so a ref name
-      # containing shell metacharacters would otherwise be executed.
-      - name: Resolve version
-        id: resolve
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_NAME: ${{ github.ref_name }}
-          BUMPED_VERSION: ${{ needs.version-bump.outputs.version }}
-        run: |
-          if [ "${EVENT_NAME}" = "push" ]; then
-            echo "version=${REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${BUMPED_VERSION}" >> "$GITHUB_OUTPUT"
-          fi
+          default-bump: ${{ inputs.default-bump }}
 
   # Drafted when the caller publishes, so a failed upload never leaves a visible
   # release pointing at a version that is not on the index. The caller's publish
   # job undrafts it. When nothing is published there is nothing to wait for, so
   # the release is finished here.
   create-release:
-    needs: [resolve-version]
-    if: always() && needs.resolve-version.result == 'success' && needs.resolve-version.outputs.version != ''
+    needs: [version]
+    if: needs.version.outputs.version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,7 +80,7 @@ jobs:
     steps:
       # persist-credentials: false -- checkout otherwise leaves the job's token in
       # .git/config, where any later step (or a dependency's build script) can read
-      # it. only the version-bump jobs, which push, keep it.
+      # it. only the version-bump action, which pushes, keeps it.
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -128,6 +92,6 @@ jobs:
         # this step exists rather than a one-line script.
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.resolve-version.outputs.version }}
+          tag_name: ${{ needs.version.outputs.version }}
           draft: ${{ inputs.publish }}
           generate_release_notes: true

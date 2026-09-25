@@ -1,0 +1,32 @@
+# Writes the release tag's version into ./Cargo.toml, just before a build.
+#
+# Cargo has no setuptools_scm: `version` must be a literal in Cargo.toml. So the
+# committed file holds a 0.0.0 placeholder, the tag is the only real version, and
+# every job that builds or publishes runs this first. See `stamp.py` for which
+# fields it sets. The edit is never committed, so `cargo publish` needs
+# `--allow-dirty` afterwards.
+
+name: Stamp Cargo version
+description: Write a release version into Cargo.toml.
+
+inputs:
+  version:
+    description: "Version to write, eg. v1.2.3 or 1.2.3."
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # enable-cache: false -- there is nothing worth caching for one small
+    # dependency, and a release build should not read a cache other runs wrote.
+    - uses: astral-sh/setup-uv@v10.0.1
+      with:
+        version: "latest"
+        enable-cache: false
+
+    - name: Stamp Cargo.toml
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SCRIPT: ${{ github.action_path }}/stamp.py
+      run: uv run --no-project --with tomlkit==0.15.1 python "${SCRIPT}" "${VERSION}"
