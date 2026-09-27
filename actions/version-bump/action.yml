@@ -1,7 +1,8 @@
 # Decides which tag a release run releases, creating it when a merge asks for one.
 #
-#   push to main  ->  read #major/#minor/#patch/#none from the commit messages
-#                     since the last tag, push the next tag, output it
+#   push to main  ->  read #major/#minor/#patch from the commit messages since
+#                     the last tag, push the next tag, output it. No keyword (or
+#                     #none) releases nothing.
 #   push of a tag ->  output that tag as-is
 #
 # Nothing is committed: the tag alone is the version. Python projects read it
@@ -20,9 +21,6 @@ name: Version bump
 description: Resolve the tag to release, pushing a new one when a merge asks for it.
 
 inputs:
-  default-bump:
-    description: "Bump applied when no commit since the last tag has #major, #minor, #patch or #none."
-    default: "patch"
   token:
     description: "Needs `contents: write` to push the tag. Defaults to the job's own token."
     default: ${{ github.token }}
@@ -59,7 +57,9 @@ runs:
       uses: anothrNick/github-tag-action@f278d49d30cdd8775cc3e7dd00b5ee11686ee297
       env:
         GITHUB_TOKEN: ${{ inputs.token }}
-        DEFAULT_BUMP: ${{ inputs.default-bump }}
+        # none, not patch: a push to main without a keyword -- including a
+        # direct push, which no test has gated -- must not publish anything.
+        DEFAULT_BUMP: none
         WITH_V: "true"
 
     - id: resolve
