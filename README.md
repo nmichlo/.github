@@ -15,7 +15,7 @@ instead of a copy of the logic.
 | workflow | does |
 |---|---|
 | `release.yaml` | bump the tag on merge to `main`, draft a release, publish, undraft |
-| `release-rust.yaml` | the same, for maturin projects: wheel matrix, PyPI + crates.io |
+| `release-rust.yaml` | the same, for maturin projects: wheel matrix, PyPI + crates.io, optional binary archives |
 | `pre-commit.yaml` | run `.pre-commit-config.yaml` verbatim |
 | `pytest.yaml` | run the test suite over a Python matrix |
 
@@ -236,6 +236,75 @@ jobs:
         with: {pattern: 'wheels-*', merge-multiple: true, path: dist}
       - uses: pypa/gh-action-pypi-publish@release/v1
 ```
+
+#### Optional inputs
+
+| input | default | does |
+|---|---|---|
+| `python-version` | `3.12` | Python the wheels are built for |
+| `crates-io` | `true` | also publish the crate to crates.io |
+| `targets` | 5 entries, below | JSON array of build matrix entries |
+| `bindings` | `''` | `bin` for a binary-only crate: drops `-i python<ver>` from the build |
+| `bin-archives` | `false` | attach `<bin-name>-<version>-<triple>.tar.gz` to the release, for `cargo binstall` |
+| `bin-name` | `package-name` | the binary `bin-archives` packages |
+
+`targets` defaults to the matrix every caller had before it was an input:
+
+```json
+[
+  {"runs-on": "ubuntu-latest", "target": "x86_64"},
+  {"runs-on": "ubuntu-latest", "target": "aarch64"},
+  {"runs-on": "windows-latest", "target": "x86_64"},
+  {"runs-on": "macos-15-intel", "target": "x86_64"},
+  {"runs-on": "macos-15", "target": "aarch64"}
+]
+```
+
+An entry may also set `python-version`, which otherwise comes from the input.
+`target` goes to maturin as-is: a short arch, or a full Rust target triple.
+
+crates.io is published only once every wheel and the sdist have built. A crate
+version can never be re-uploaded, so a failed build must stop it.
+
+#### Binary-only crates
+
+A maturin `bindings = "bin"` crate ships its CLI as a `py3-none-<platform>`
+wheel. It has no Python extension, so `-i python<ver>` means nothing there, and
+maturin fails if that interpreter is missing. `bindings: bin` drops it.
+
+`bin-archives: true` also packages the binary for `cargo binstall`:
+
+```
+wheel  my_cli-1.2.3-py3-none-manylinux_2_17_x86_64.whl
+         my_cli-1.2.3.data/scripts/my-cli    <- unzipped, not rebuilt
+  ->
+release asset  my-cli-1.2.3-x86_64-unknown-linux-gnu.tar.gz
+                 my-cli, LICENSE*, THIRD_PARTY_LICENSES*, README.md
+```
+
+The binary comes out of the wheel rather than a second `cargo build`. It is
+then the same file `pip install` puts on PATH, built in the same manylinux
+container and cross toolchain. It needs `bindings: bin`, since only a bin wheel
+holds a binary.
+
+```yaml
+    uses: nmichlo/.github/.github/workflows/release-rust.yaml@main
+    with:
+      package-name: my-cli
+      bindings: bin
+      bin-archives: true
+      # no Windows entry: the crate does not build there
+      targets: >-
+        [
+          {"runs-on": "ubuntu-latest", "target": "x86_64"},
+          {"runs-on": "ubuntu-latest", "target": "aarch64"},
+          {"runs-on": "macos-15-intel", "target": "x86_64"},
+          {"runs-on": "macos-15", "target": "aarch64"}
+        ]
+```
+
+`cargo binstall` finds the archive by **crate** name. If the binary is named
+differently from the crate, add `[package.metadata.binstall]` to `Cargo.toml`.
 
 #### Why the PyPI publish job lives in the caller
 
