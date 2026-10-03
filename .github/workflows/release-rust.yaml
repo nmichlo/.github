@@ -37,6 +37,48 @@ on:
         description: "Also publish the crate to crates.io over OIDC."
         type: boolean
         default: true
+      # The default is the matrix every caller had before this input existed:
+      # Linux x86_64 + aarch64, Windows x86_64 (no aarch64 cross-compile
+      # support), macOS x86_64 + aarch64. Override it to drop a platform the
+      # project cannot build on.
+      #
+      # `python-version` is left out of each entry and filled in from the
+      # input of that name. An input's default cannot reliably read another
+      # input, so writing it into the JSON is not an option.
+      targets:
+        description: >
+          JSON array of build matrix entries, each {"runs-on", "target"} and an
+          optional "python-version" that defaults to the input of that name.
+          `target` is passed to maturin as-is: a short arch (x86_64, aarch64)
+          or a full Rust target triple.
+        type: string
+        default: |
+          [
+            {"runs-on": "ubuntu-latest", "target": "x86_64"},
+            {"runs-on": "ubuntu-latest", "target": "aarch64"},
+            {"runs-on": "windows-latest", "target": "x86_64"},
+            {"runs-on": "macos-15-intel", "target": "x86_64"},
+            {"runs-on": "macos-15", "target": "aarch64"}
+          ]
+      bindings:
+        description: >
+          The crate's maturin bindings, only where they change the build. Set
+          "bin" for a binary-only crate: its wheel holds no Python extension,
+          so it is not built per interpreter, and `-i python<ver>` is dropped.
+          Empty leaves the build as it has always been.
+        type: string
+        default: ""
+      bin-archives:
+        description: >
+          Also attach `<bin-name>-<version>-<target-triple>.tar.gz` archives to
+          the GitHub release, for `cargo binstall`. Needs `bindings: bin`: the
+          binary is taken out of the bin wheel.
+        type: boolean
+        default: false
+      bin-name:
+        description: "Binary to archive when `bin-archives` is set. Empty means `package-name`."
+        type: string
+        default: ""
     outputs:
       version:
         description: "The tag that was released, eg. v1.2.3. Empty when nothing was released."
@@ -64,18 +106,15 @@ jobs:
   python-build:
     needs: [version]
     if: needs.version.outputs.version != ''
+    # the name GitHub generated when every entry still carried python-version,
+    # kept so a run's job names do not change under existing callers.
+    name: python-build (${{ matrix.python-version || inputs.python-version }}, ${{ matrix.runs-on }}, ${{ matrix.target }})
     strategy:
       matrix:
-        include:
-          # Linux
-          - { python-version: "${{ inputs.python-version }}", runs-on: "ubuntu-latest", target: "x86_64" }
-          - { python-version: "${{ inputs.python-version }}", runs-on: "ubuntu-latest", target: "aarch64" }
-          # Windows (no aarch64 cross-compile support)
-          - { python-version: "${{ inputs.python-version }}", runs-on: "windows-latest", target: "x86_64" }
-          # macOS
-          - { python-version: "${{ inputs.python-version }}", runs-on: "macos-15-intel", target: "x86_64" }
-          - { python-version: "${{ inputs.python-version }}", runs-on: "macos-15", target: "aarch64" }
+        include: ${{ fromJSON(inputs.targets) }}
     runs-on: ${{ matrix.runs-on }}
+    env:
+      PYTHON_VERSION: ${{ matrix.python-version || inputs.python-version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -86,17 +125,75 @@ jobs:
           version: ${{ needs.version.outputs.version }}
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
+      # `-i` pins the interpreter an extension wheel is built for. A bin wheel
+      # is `py3-none-<platform>`, so it means nothing there -- yet maturin still
+      # fails when that interpreter is missing. Hence dropped for bin crates.
+      # NB: `cond && '' || x` would always give x, since '' is falsy, so the
+      # condition is written the other way round.
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release -i python${{ matrix.python-version }} --out dist
+          args: --release ${{ inputs.bindings != 'bin' && format('-i python{0}', env.PYTHON_VERSION) || '' }} --out dist
           sccache: true
           manylinux: auto
       - uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.python-version }}-${{ matrix.runs-on }}-${{ matrix.target }}
+          name: wheels-${{ env.PYTHON_VERSION }}-${{ matrix.runs-on }}-${{ matrix.target }}
           path: dist
+
+      # The binary is unzipped from the wheel just built rather than built a
+      # second time with cargo. That makes it the exact file `pip install`
+      # puts on PATH, and it inherits everything maturin-action already set up
+      # per target -- the manylinux container that keeps the glibc floor low,
+      # and the aarch64 Linux cross toolchain -- which a plain `cargo build`
+      # on the runner would have to reproduce by hand.
+      #
+      # Python's zipfile rather than `unzip`, which Windows runners may lack. It
+      # drops the executable bit, hence the chmod. The archive is flat, the
+      # binary at its root, which `cargo binstall` finds without config.
+      - if: inputs.bin-archives
+        name: Package binary archive
+        shell: bash
+        env:
+          BIN_NAME: ${{ inputs.bin-name || inputs.package-name }}
+          VERSION: ${{ needs.version.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          # maturin accepts a short arch or a full triple; binstall wants the triple.
+          case "${TARGET}" in
+            *-*) triple="${TARGET}" ;;
+            *) case "${RUNNER_OS}" in
+                 Linux) triple="${TARGET}-unknown-linux-gnu" ;;
+                 macOS) triple="${TARGET}-apple-darwin" ;;
+                 Windows) triple="${TARGET}-pc-windows-msvc" ;;
+               esac ;;
+          esac
+          name="${BIN_NAME}-${VERSION#v}-${triple}"
+
+          python -m zipfile -e dist/*.whl bin-wheel
+          bin="$(find bin-wheel -path '*.data/scripts/*' \( -name "${BIN_NAME}" -o -name "${BIN_NAME}.exe" \))"
+          if [ -z "${bin}" ]; then
+            echo "::error::no ${BIN_NAME} in the wheel's .data/scripts/ -- is this a bindings = \"bin\" crate, and is bin-name right?"
+            exit 1
+          fi
+
+          mkdir bin-stage bin-archives
+          cp "${bin}" bin-stage/
+          chmod +x "bin-stage/$(basename "${bin}")"
+          shopt -s nullglob
+          for f in LICENSE* THIRD_PARTY_LICENSES* README.md; do
+            cp "${f}" bin-stage/
+          done
+          (cd bin-stage && tar -czf "../bin-archives/${name}.tar.gz" -- *)
+          tar -tzvf "bin-archives/${name}.tar.gz"
+      # `bin-archives-*`, never `wheels-*`: callers publish every `wheels-*`
+      # artifact to PyPI, which would try to upload a binary tarball as an sdist.
+      - if: inputs.bin-archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-archives-${{ env.PYTHON_VERSION }}-${{ matrix.runs-on }}-${{ matrix.target }}
+          path: bin-archives
 
   python-sdist:
     needs: [version]
@@ -134,9 +231,14 @@ jobs:
   # this workflow uploads. crates.io is unaffected -- it matches `workflow_ref`.
 
   # https://crates.io/docs/trusted-publishing
+  #
+  # Waits for every build. A crates.io version can never be re-uploaded, so
+  # publishing it before the wheels are known to build would leave a crate
+  # released for a version that has no wheels and no GitHub release. This
+  # changed for all callers at once: it used to need only `version`.
   rust-publish:
     name: Publish to crates.io
-    needs: [version]
+    needs: [version, python-build, python-sdist]
     runs-on: ubuntu-latest
     if: inputs.crates-io && needs.version.outputs.version != ''
     environment: release  # Optional: for enhanced security
@@ -176,6 +278,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - if: inputs.bin-archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bin-archives-*
           merge-multiple: true
           path: dist
       - name: Create GitHub Release
