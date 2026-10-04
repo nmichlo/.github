@@ -92,10 +92,12 @@ The caller must pass **both** triggers. Tags pushed with `GITHUB_TOKEN` do not
 trigger other workflows, so a split bump-then-publish pair can never publish on
 a merge. One workflow owning both triggers is what makes it work without a PAT.
 
-Version comes from the PR title keyword (`#major`, `#minor`, `#patch`). Without
-one nothing is released, the same as `#none` -- so a direct push to `main`, which
-no test has gated, cannot publish by accident. A squash merge copies the title
-into the commit message, which is where `actions/version-bump` reads it.
+Version comes from the PR title keyword (`#major`, `#minor`, `#patch`), and only
+from there: `actions/version-bump` finds the pull request the pushed commit
+merged and reads its title, so squash, rebase and merge commits all release the
+same version, and commit messages never count. Without a keyword nothing is
+released, the same as `#none`, and neither does a direct push to `main` with no
+pull request, which no test has gated. A `v*` tag pushed by hand releases as is.
 
 The trigger is `push` to `main`, not a closed pull request. GitHub gives a
 `pull_request` run from a **fork** a read-only token, even after the merge, so
@@ -125,7 +127,7 @@ all.
 | `actions/workflow-lint` | run actionlint and zizmor over `.github/workflows` |
 | `actions/build-dist` | check out a tag and build sdist + wheel into `dist/` |
 | `actions/undraft-release` | turn a draft GitHub release into a published one |
-| `actions/version-bump` | read the `#bump` keyword and push the next tag, or pass a pushed tag through |
+| `actions/version-bump` | read the `#bump` keyword from the merged PR's title and push the next tag, or pass a pushed tag through |
 | `actions/stamp-cargo-version` | write a release version into `Cargo.toml` before a build |
 
 ### actions/gate

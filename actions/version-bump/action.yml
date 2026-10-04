@@ -1,9 +1,13 @@
 # Decides which tag a release run releases, creating it when a merge asks for one.
 #
-#   push to main  ->  read #major/#minor/#patch from the commit messages since
-#                     the last tag, push the next tag, output it. No keyword (or
-#                     #none) releases nothing.
-#   push of a tag ->  output that tag as-is
+#   push to main  ->  read #major/#minor/#patch from the title of the pull
+#                     request the pushed commit merged, push the next tag,
+#                     output it. No keyword (or #none), or no pull request (a
+#                     direct push), releases nothing.
+#   push of a tag ->  output that tag as-is, so a tag pushed by hand releases.
+#
+# Only the title counts, never commit messages, so a squash, rebase or merge
+# commit of the same pull request releases the same version.
 #
 # Nothing is committed: the tag alone is the version. Python projects read it
 # with setuptools_scm, and Rust projects write it into Cargo.toml at build time
@@ -11,18 +15,17 @@
 #
 # It runs on `push` rather than on a closed pull request because GitHub gives a
 # pull_request run from a fork a read-only token, even once it is merged, so the
-# tag push fails with a 403. A squash merge puts the PR title in the commit
-# message, so the keyword still comes from the title.
+# tag push fails with a 403. The pull request is found from the pushed commit.
 #
 # Tags pushed with GITHUB_TOKEN do not trigger other workflows, so everything
 # that releases the tag has to run in the same workflow as this action.
 
 name: Version bump
-description: Resolve the tag to release, pushing a new one when a merge asks for it.
+description: Resolve the tag to release, pushing a new one when a merged pull request's title asks for it.
 
 inputs:
   token:
-    description: "Needs `contents: write` to push the tag. Defaults to the job's own token."
+    description: "Needs `contents: write` to push the tag and read pull requests. Defaults to the job's own token."
     default: ${{ github.token }}
 
 outputs:
@@ -33,49 +36,28 @@ outputs:
 runs:
   using: composite
   steps:
-    # keeps its credentials on purpose: the tag action below pushes with them.
-    # merge_commit_sha only exists on the closed-pull-request path, which stays
-    # supported until every caller has moved to `push`.
-    - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-      uses: actions/checkout@v7  # zizmor: ignore[artipacked]
-      with:
-        ref: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-        fetch-depth: "0"  # the tag action reads history to find the last tag
-        token: ${{ inputs.token }}
-
-    # the tag action reports an EXISTING tag as `new_tag` both for #none and when
-    # there are no commits since the last tag, so its output cannot tell us
-    # whether anything was created. The tag list from before it runs can.
-    - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-      name: Record existing tags
-      shell: bash
-      run: git tag --list > "${RUNNER_TEMP}/tags-before"
-
-    - if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-      id: bump
-      # pinned to 1.71.0
-      uses: anothrNick/github-tag-action@f278d49d30cdd8775cc3e7dd00b5ee11686ee297
-      env:
-        GITHUB_TOKEN: ${{ inputs.token }}
-        # none, not patch: a push to main without a keyword -- including a
-        # direct push, which no test has gated -- must not publish anything.
-        DEFAULT_BUMP: none
-        WITH_V: "true"
-
     - id: resolve
       name: Resolve version
       shell: bash
       env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ github.repository }}
         REF: ${{ github.ref }}
         REF_NAME: ${{ github.ref_name }}
-        NEW_TAG: ${{ steps.bump.outputs.new_tag }}
+        # the closed-pull-request path stays supported until every caller has
+        # moved to `push`: its event carries the title and the merge commit
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
       run: |
         if [[ "${REF}" == refs/tags/* ]]; then
-          version="${REF_NAME}"
-        elif [ -n "${NEW_TAG}" ] && ! grep -qxF "${NEW_TAG}" "${RUNNER_TEMP}/tags-before"; then
-          version="${NEW_TAG}"
-        else
-          version=""
+          echo "version: ${REF_NAME} (pushed tag)"
+          echo "version=${REF_NAME}" >> "${GITHUB_OUTPUT}"
+          exit 0
+        fi
+        version="$("${GITHUB_ACTION_PATH}/next-version.sh" "${REPO}" "${SHA}" "${PR_TITLE}")"
+        if [ -n "${version}" ]; then
+          # a lightweight tag on the merged commit, as `git tag` makes
+          gh api "repos/${REPO}/git/refs" -f "ref=refs/tags/${version}" -f "sha=${SHA}" > /dev/null
         fi
         echo "version: ${version:-(nothing to release)}"
         echo "version=${version}" >> "${GITHUB_OUTPUT}"
