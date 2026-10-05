@@ -38,26 +38,61 @@ runs:
   steps:
     - id: resolve
       name: Resolve version
-      shell: bash
-      env:
-        GH_TOKEN: ${{ inputs.token }}
-        REPO: ${{ github.repository }}
-        REF: ${{ github.ref }}
-        REF_NAME: ${{ github.ref_name }}
-        # the closed-pull-request path stays supported until every caller has
-        # moved to `push`: its event carries the title and the merge commit
-        PR_TITLE: ${{ github.event.pull_request.title }}
-        SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
-      run: |
-        if [[ "${REF}" == refs/tags/* ]]; then
-          echo "version: ${REF_NAME} (pushed tag)"
-          echo "version=${REF_NAME}" >> "${GITHUB_OUTPUT}"
-          exit 0
-        fi
-        version="$("${GITHUB_ACTION_PATH}/next-version.sh" "${REPO}" "${SHA}" "${PR_TITLE}")"
-        if [ -n "${version}" ]; then
-          # a lightweight tag on the merged commit, as `git tag` makes
-          gh api "repos/${REPO}/git/refs" -f "ref=refs/tags/${version}" -f "sha=${SHA}" > /dev/null
-        fi
-        echo "version: ${version:-(nothing to release)}"
-        echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      uses: actions/github-script@v9
+      with:
+        github-token: ${{ inputs.token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const release = (version, why) => {
+            core.info(`version: ${version || '(nothing to release)'}${why ? ` (${why})` : ''}`);
+            core.setOutput('version', version);
+          };
+          if (context.ref.startsWith('refs/tags/')) {
+            return release(context.ref.slice('refs/tags/'.length), 'pushed tag');
+          }
+
+          // the closed-pull-request path stays supported until every caller has
+          // moved to `push`: its event carries the title and the merge commit
+          const closed = context.payload.pull_request;
+          const sha = closed?.merge_commit_sha || context.sha;
+          let title = closed?.title;
+          if (!title) {
+            // the pull request whose merge put the commit on the default branch. A
+            // squash or rebase merge's merge_commit_sha is the commit it left on
+            // top, which is the one pushed; other pull requests that merely
+            // contain the commit are left out.
+            const { data: pulls } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner, repo, commit_sha: sha,
+            });
+            title = pulls.find((pr) => pr.merged_at && pr.merge_commit_sha === sha)?.title;
+          }
+          if (!title) {
+            return release('', `no pull request merged ${sha}`);
+          }
+          core.info(`pull request: ${title}`);
+
+          // the largest keyword in the title wins
+          const parts = ['major', 'minor', 'patch'];
+          const bump = parts.findIndex((part) => title.includes(`#${part}`));
+          if (bump < 0) {
+            return release('', 'no #major/#minor/#patch in the title');
+          }
+
+          // the highest release tag (v0.0.0 if none); pre-releases (v1.2.3-rc1)
+          // are not bumped from
+          const refs = await github.paginate(github.rest.git.listMatchingRefs, {
+            owner, repo, ref: 'tags/v',
+          });
+          const last = refs
+            .map(({ ref }) => /^refs\/tags\/v(\d+)\.(\d+)\.(\d+)$/.exec(ref))
+            .filter(Boolean)
+            .map((match) => match.slice(1).map(Number))
+            .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+            .at(-1) ?? [0, 0, 0];
+          const next = last.map((n, i) => (i < bump ? n : i === bump ? n + 1 : 0));
+          const version = `v${next.join('.')}`;
+          core.info(`bump: ${parts[bump]} from v${last.join('.')}`);
+
+          // a lightweight tag on the merged commit, as `git tag` makes
+          await github.rest.git.createRef({ owner, repo, ref: `refs/tags/${version}`, sha });
+          release(version);
