@@ -7,7 +7,7 @@
 # `--allow-dirty` afterwards.
 
 name: Stamp Cargo version
-description: Write a release version into Cargo.toml.
+description: Write a release version into Cargo.toml, and into Cargo.lock if there is one.
 
 inputs:
   version:
