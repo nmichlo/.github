@@ -11,8 +11,9 @@
 #   fixes that without a PAT. A tag this workflow pushes does not re-enter it, so
 #   there is no loop; a tag a human pushes does.
 #
-# Bumping is keyword-driven: put #major, #minor or #patch in the PR title (a
-# squash merge puts it in the commit message). Without one nothing is released.
+# Bumping is keyword-driven: put #major, #minor or #patch in the PR title, read
+# from the merged pull request whatever the merge method. Without one nothing is
+# released.
 #
 # This workflow does NOT publish to PyPI. PyPI's trusted publishing matches the
 # `job_workflow_ref` OIDC claim, which names the file a job is WRITTEN in -- from
